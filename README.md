@@ -1,5 +1,3 @@
-
-```markdown
 # Schnorr-auth: A Rust-Based Implementation of Mutual Authentication Using Schnorr Proofs and ECDH
 
 ## Abstract
@@ -171,8 +169,5 @@ This project demonstrates the construction of a secure, mutual authentication pr
 
 **Firzen1912**
 Research focus: IoT Security, Zero-Knowledge Proofs, and Lightweight Authentication
+
 License: MIT
-
-```
-
----
