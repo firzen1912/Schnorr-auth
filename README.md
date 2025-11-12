@@ -145,9 +145,7 @@ Future development can extend this prototype into a fully functional lightweight
 
 1. Implementing real client-server communication over TCP, MQTT, or CoAP.
 2. Incorporating symmetric encryption for secure message exchange using the derived session key.
-3. Extending the system to multi-party or hierarchical trust models.
-4. Evaluating performance on embedded platforms such as Raspberry Pi or ESP32.
-5. Exploring advanced zero-knowledge protocols (e.g., Sigma or zk-SNARK-based authentication).
+3. Evaluating performance on embedded platforms such as Raspberry Pi or ESP32.
 
 These future directions aim to strengthen the system’s real-world applicability and scalability while maintaining its efficiency and security under constrained computational conditions.
 
