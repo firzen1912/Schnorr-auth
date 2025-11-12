@@ -137,21 +137,19 @@ This implementation is a proof-of-concept designed for educational and research 
 
 ---
 
-## 6. Future Work
-
-Further development could extend this prototype into a fully functional lightweight authentication framework for IoT networks. Future directions include:
-
-* Implementing real client-server communication over TCP, MQTT, or CoAP.
-* Incorporating symmetric encryption for secure message exchange using the derived session key.
-* Extending to multi-party settings or hierarchical trust models.
-* Evaluating performance on embedded hardware such as Raspberry Pi or ESP32 platforms.
-* Exploring advanced zero-knowledge protocols (e.g., Sigma or zk-SNARK-based authentication).
-
----
-
-## 7. Conclusion
+## 6. Future Work and Conclusion
 
 This project demonstrates the construction of a secure, mutual authentication protocol combining Schnorr zero-knowledge proofs and elliptic-curve key exchange within the Rust programming environment. The resulting implementation highlights the practicality of zero-knowledge-based authentication for lightweight and resource-constrained devices, bridging academic theory and practical cybersecurity applications.
+
+Future development can extend this prototype into a fully functional lightweight authentication framework for IoT networks. Potential directions include:
+
+1. Implementing real client-server communication over TCP, MQTT, or CoAP.
+2. Incorporating symmetric encryption for secure message exchange using the derived session key.
+3. Extending the system to multi-party or hierarchical trust models.
+4. Evaluating performance on embedded platforms such as Raspberry Pi or ESP32.
+5. Exploring advanced zero-knowledge protocols (e.g., Sigma or zk-SNARK-based authentication).
+
+These future directions aim to strengthen the system’s real-world applicability and scalability while maintaining its efficiency and security under constrained computational conditions.
 
 ---
 
@@ -168,6 +166,6 @@ This project demonstrates the construction of a secure, mutual authentication pr
 ## Author
 
 **Firzen1912**
-Research focus: IoT Security, Zero-Knowledge Proofs, and Lightweight Authentication
+Research Focus: IoT Security, Zero-Knowledge Proofs, and Lightweight Authentication
 
 License: MIT
