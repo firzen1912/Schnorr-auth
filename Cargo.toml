@@ -1,0 +1,11 @@
+[package]
+name = "bulletproof-auth"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+rand = "0.8"
+merlin = "3"
+curve25519-dalek = { version = "4", features = ["alloc"] }
+bulletproofs = "5"    # or the current version on crates.io — check docs.rs/crates.io
+hex = "0.4"
