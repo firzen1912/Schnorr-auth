@@ -180,7 +180,7 @@ These future directions aim to strengthen the system’s real-world applicabilit
 
 ## Author
 
-**Firzen1912**
+**Khang Tran**
 Research Focus: IoT Security, Zero-Knowledge Proofs, and Lightweight Authentication
 
 License: MIT
