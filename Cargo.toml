@@ -1,13 +1,13 @@
 [package]
-name = "schnorr_mutual_auth_demo"
+name = "schnorr_mutual_auth_over_tcp_demo"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-curve25519-dalek = { version = "4.1.3", features = ["alloc", "rand_core"] }
+curve25519-dalek = "4"
 merlin = "3"
-rand = "0.8"
-sha2 = "0.10"
 hkdf = "0.12"
-zeroize = "1.8"
+sha2 = "0.10"
+rand = "0.8"
+zeroize = "1"
 hex = "0.4"
