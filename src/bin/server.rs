@@ -1,7 +1,8 @@
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::time::Instant;
+use std::thread;
 
-// Crypto imports
 use curve25519_dalek::constants::RISTRETTO_BASEPOINT_POINT;
 use curve25519_dalek::ristretto::{CompressedRistretto, RistrettoPoint};
 use curve25519_dalek::scalar::Scalar;
@@ -11,7 +12,9 @@ use rand::{rngs::OsRng, RngCore};
 use sha2::Sha256;
 use zeroize::Zeroize;
 
-// === Common Crypto Helpers (same as in client) ===
+// ----------------------------------------------------
+// Crypto helpers
+// ----------------------------------------------------
 
 fn random_scalar() -> Scalar {
     let mut bytes = [0u8; 64];
@@ -19,10 +22,8 @@ fn random_scalar() -> Scalar {
     Scalar::from_bytes_mod_order_wide(&bytes)
 }
 
-/// Schnorr prove: returns (pubkey, a, s)
 fn schnorr_prove(x: &Scalar, label: &'static [u8]) -> (RistrettoPoint, RistrettoPoint, Scalar) {
     let pubkey = RISTRETTO_BASEPOINT_POINT * x;
-
     let r = random_scalar();
     let a = RISTRETTO_BASEPOINT_POINT * r;
 
@@ -47,23 +48,21 @@ fn schnorr_verify(pubkey: &RistrettoPoint, a: &RistrettoPoint, s: &Scalar, label
     t.challenge_bytes(b"c", &mut buf);
     let c = Scalar::from_bytes_mod_order_wide(&buf);
 
-    let lhs = RISTRETTO_BASEPOINT_POINT * s;
-    let rhs = a + pubkey * c;
-    lhs == rhs
+    RISTRETTO_BASEPOINT_POINT * s == a + pubkey * c
 }
 
 fn derive_session_key(
     secret: &Scalar,
     peer_pub: &RistrettoPoint,
-    nonce1: &[u8; 32],
-    nonce2: &[u8; 32],
+    n1: &[u8; 32],
+    n2: &[u8; 32],
 ) -> [u8; 32] {
     let shared = peer_pub * secret;
     let shared_bytes = shared.compress().to_bytes();
 
     let mut info = Vec::new();
-    info.extend_from_slice(nonce1);
-    info.extend_from_slice(nonce2);
+    info.extend_from_slice(n1);
+    info.extend_from_slice(n2);
 
     let hk = Hkdf::<Sha256>::new(Some(&info), &shared_bytes);
     let mut okm = [0u8; 32];
@@ -71,119 +70,128 @@ fn derive_session_key(
     okm
 }
 
-// === Network helpers (mirror client.rs) ===
+// ----------------------------------------------------
+// Network helpers WITH BYTE COUNTING
+// ----------------------------------------------------
 
-fn recv_exact(stream: &mut impl Read, buf: &mut [u8]) -> std::io::Result<()> {
-    stream.read_exact(buf)
-}
-
-fn send_all(stream: &mut impl Write, buf: &[u8]) -> std::io::Result<()> {
+fn send_all(stream: &mut impl Write, buf: &[u8], sent: &mut usize) -> std::io::Result<()> {
+    *sent += buf.len();
     stream.write_all(buf)
 }
 
-fn recv_point(stream: &mut impl Read) -> std::io::Result<RistrettoPoint> {
-    let mut b = [0u8; 32];
-    recv_exact(stream, &mut b)?;
-    let comp = CompressedRistretto(b);
-    comp.decompress().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid Ristretto point")
-    })
+fn recv_exact(stream: &mut impl Read, buf: &mut [u8], recv: &mut usize) -> std::io::Result<()> {
+    stream.read_exact(buf)?;
+    *recv += buf.len();
+    Ok(())
 }
 
-fn recv_scalar(stream: &mut impl Read) -> std::io::Result<Scalar> {
+fn recv_point(stream: &mut impl Read, recv: &mut usize) -> std::io::Result<RistrettoPoint> {
     let mut b = [0u8; 32];
-    stream.read_exact(&mut b)?;
-    let ct_opt = Scalar::from_canonical_bytes(b);
-    if ct_opt.is_some().unwrap_u8() == 1 {
-        Ok(ct_opt.unwrap())
+    recv_exact(stream, &mut b, recv)?;
+    CompressedRistretto(b)
+        .decompress()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid point"))
+}
+
+fn recv_scalar(stream: &mut impl Read, recv: &mut usize) -> std::io::Result<Scalar> {
+    let mut b = [0u8; 32];
+    recv_exact(stream, &mut b, recv)?;
+    let ct = Scalar::from_canonical_bytes(b);
+    if ct.is_some().unwrap_u8() == 1 {
+        Ok(ct.unwrap())
     } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "invalid scalar",
-        ))
+        Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "invalid scalar"))
     }
 }
 
-// === Main server logic: mutual authentication ===
+// ----------------------------------------------------
+// SERVER CLIENT HANDLER
+// ----------------------------------------------------
+
+fn handle_client(mut stream: std::net::TcpStream, server_static_secret: Scalar, server_static_pub: RistrettoPoint) {
+    let start = Instant::now();
+    let mut sent = 0usize;
+    let mut recv = 0usize;
+
+    println!("Server: New client {}", stream.peer_addr().unwrap());
+
+    // === Receive client credentials ===
+    let client_static_pub = recv_point(&mut stream, &mut recv).unwrap();
+    let client_a = recv_point(&mut stream, &mut recv).unwrap();
+    let client_s = recv_scalar(&mut stream, &mut recv).unwrap();
+
+    let mut client_nonce = [0u8; 32];
+    recv_exact(&mut stream, &mut client_nonce, &mut recv).unwrap();
+
+    let client_eph_pub = recv_point(&mut stream, &mut recv).unwrap();
+
+    // === Verify client ===
+    let ok = schnorr_verify(&client_static_pub, &client_a, &client_s, b"client_schnorr");
+    println!("Server: Client authentication = {}", ok);
+
+    if !ok {
+        eprintln!("Server: Invalid client proof");
+        return;
+    }
+
+    // === Server generates proof + ephemeral keys ===
+    let (spub2, server_a, server_s) =
+        schnorr_prove(&server_static_secret, b"server_schnorr");
+    assert_eq!(spub2.compress().to_bytes(), server_static_pub.compress().to_bytes());
+
+    let mut server_nonce = [0u8; 32];
+    OsRng.fill_bytes(&mut server_nonce);
+
+    let server_eph_secret = random_scalar();
+    let server_eph_pub = RISTRETTO_BASEPOINT_POINT * server_eph_secret;
+
+    // === Send server credentials ===
+    send_all(&mut stream, &server_static_pub.compress().to_bytes(), &mut sent).unwrap();
+    send_all(&mut stream, &server_a.compress().to_bytes(), &mut sent).unwrap();
+    send_all(&mut stream, &server_s.to_bytes(), &mut sent).unwrap();
+    send_all(&mut stream, &server_nonce, &mut sent).unwrap();
+    send_all(&mut stream, &server_eph_pub.compress().to_bytes(), &mut sent).unwrap();
+
+    stream.flush().unwrap();
+
+    // === Derive key ===
+    let key =
+        derive_session_key(&server_eph_secret, &client_eph_pub, &client_nonce, &server_nonce);
+
+    println!(
+        "Server: Session key for {} = {}",
+        stream.peer_addr().unwrap(),
+        hex::encode(key)
+    );
+
+    let duration = start.elapsed();
+
+    println!(
+        "SERVER METRICS -> Client {} Duration: {:?}, Sent: {} bytes, Received: {} bytes",
+        stream.peer_addr().unwrap(), duration, sent, recv
+    );
+}
+
+// ----------------------------------------------------
+// MAIN SERVER
+// ----------------------------------------------------
 
 fn main() -> std::io::Result<()> {
-    // Listen on port 4000 (matches client.rs)
+    println!("Server: Listening on 0.0.0.0:4000");
     let listener = TcpListener::bind("0.0.0.0:4000")?;
-    println!("Server listening on 0.0.0.0:4000");
 
-    // For a real system, you would load a persistent static keypair from disk/flash.
-    let mut server_static_secret = random_scalar();
+    // One static key for all clients
+    let server_static_secret = random_scalar();
     let server_static_pub = RISTRETTO_BASEPOINT_POINT * server_static_secret;
 
-    for stream in listener.incoming() {
-        let mut stream = stream?;
-        println!("Client connected.");
+    loop {
+        let (stream, _) = listener.accept()?;
 
-        // === Step 1: Receive client credentials ===
-        let client_static_pub = recv_point(&mut stream)?;
-        let client_a = recv_point(&mut stream)?;
-        let client_s = recv_scalar(&mut stream)?;
-        let mut client_nonce = [0u8; 32];
-        recv_exact(&mut stream, &mut client_nonce)?;
-        let client_eph_pub = recv_point(&mut stream)?;
+        let ss = server_static_secret.clone();
+        let sp = server_static_pub.clone();
 
-        println!("Received client credentials and proof components.");
-
-        // === Step 2: Verify client's Schnorr proof ===
-        let client_ok =
-            schnorr_verify(&client_static_pub, &client_a, &client_s, b"client_schnorr");
-        println!("Client proof ok: {}", client_ok);
-        if !client_ok {
-            eprintln!("Client proof failed! Aborting authentication.");
-            // Zeroize secret and continue waiting for the next client
-            server_static_secret.zeroize();
-            continue;
-        }
-
-        // === Step 3: Generate server nonce, ephemeral key, and Schnorr proof ===
-        let mut server_nonce = [0u8; 32];
-        OsRng.fill_bytes(&mut server_nonce);
-
-        let mut server_eph_secret = random_scalar();
-        let server_eph_pub = RISTRETTO_BASEPOINT_POINT * server_eph_secret;
-
-        let (server_pub_from_prove, server_a, server_s) =
-            schnorr_prove(&server_static_secret, b"server_schnorr");
-        // Sanity check: pubkey from proof matches our server_static_pub
-        assert_eq!(
-            server_pub_from_prove.compress().to_bytes(),
-            server_static_pub.compress().to_bytes()
-        );
-
-        // === Step 4: Send server credentials to client ===
-        send_all(&mut stream, &server_static_pub.compress().to_bytes())?;
-        send_all(&mut stream, &server_a.compress().to_bytes())?;
-        send_all(&mut stream, &server_s.to_bytes())?;
-        send_all(&mut stream, &server_nonce)?;
-        send_all(&mut stream, &server_eph_pub.compress().to_bytes())?;
-        stream.flush()?;
-        println!("Sent server credentials and proof components.");
-
-        // === Step 5: Derive shared session key ===
-        let server_key = derive_session_key(
-            &server_eph_secret,
-            &client_eph_pub,
-            &client_nonce,
-            &server_nonce,
-        );
-        println!("Server derived session key: {}", hex::encode(server_key));
-
-        // === Step 6: Zeroize secrets ===
-        server_eph_secret.zeroize();
-        println!("Ephemeral secret zeroized. Handshake complete.");
-
-        // If you want the server to handle only one client, break here.
-        // break;
+        thread::spawn(move || {
+            handle_client(stream, ss, sp);
+        });
     }
-
-    // Final cleanup: zeroize long-term secret (if server is exiting)
-    server_static_secret.zeroize();
-    println!("Server static secret zeroized.");
-
-    Ok(())
 }
