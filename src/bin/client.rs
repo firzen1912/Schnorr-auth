@@ -242,6 +242,9 @@ fn do_setup(server_addr: &str, device_id: [u8; 32], mut x: Scalar) -> std::io::R
     // msg_type
     send_all(&mut stream, &[MSG_SETUP], &mut sent)?;
 
+    // server SETUP format includes token_len(u8) next; we send 0 = no token
+    send_all(&mut stream, &[0u8], &mut sent)?;
+
     // send device_id + static_pub
     let static_pub = RISTRETTO_BASEPOINT_POINT * x;
     send_all(&mut stream, &device_id, &mut sent)?;

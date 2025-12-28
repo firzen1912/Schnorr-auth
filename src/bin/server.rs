@@ -315,13 +315,19 @@ fn handle_setup(
     let device_id = recv_device_id(stream, recv)?;
     let static_pub = recv_point(stream, recv)?;
 
-    // No-overwrite policy:
+    // If already registered, require same pubkey; DO NOT return early.
+    // We still run PoP to avoid deadlock and to re-validate possession.
+    let mut is_new = false;
     if let Some(existing) = reg.get(&device_id) {
         if existing.compress().to_bytes() != static_pub.compress().to_bytes() {
-            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "device_id already registered (mismatch)"));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "device_id already registered (mismatch)",
+            ));
         }
-        // idempotent setup allowed
-        return Ok(());
+        // same key: continue to challenge + PoP
+    } else {
+        is_new = true;
     }
 
     // Challenge
@@ -338,11 +344,15 @@ fn handle_setup(
         return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "setup PoP invalid"));
     }
 
-    // Store + persist
-    reg.insert(device_id, static_pub);
-    save_registry_atomic(REGISTRY_BIN, REGISTRY_BAK, reg)?;
+    // Store + persist only if new
+    if is_new {
+        reg.insert(device_id, static_pub);
+        save_registry_atomic(REGISTRY_BIN, REGISTRY_BAK, reg)?;
+        println!("Server[SETUP]: enrolled NEW device_id={}", hex::encode(device_id));
+    } else {
+        println!("Server[SETUP]: validated existing device_id={}", hex::encode(device_id));
+    }
 
-    println!("Server[SETUP]: enrolled device_id={}", hex::encode(device_id));
     Ok(())
 }
 
